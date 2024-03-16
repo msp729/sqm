@@ -46,41 +46,75 @@ struct Args {
     /// length of frame, in ten-thousandths of a second
     #[arg(short, long, default_value_t = 4_000)]
     frame: u64,
+    /// draw "towers" instead of floating points
     #[arg(short, long, default_value_t = false)]
-    cumulative: bool,
+    tower: bool,
+    /// numeric pattern (xor is preferred)
     #[arg(short, long, default_value_t = Pattern::XOR)]
     pattern: Pattern,
+    /// character for occupied spaces
     #[arg(short, long, default_value_t = '*')]
-    on: char
+    on: char,
+    /// number of frames after which to loop back,
+    /// or 0 for "do not loop"
+    #[arg(short, long, default_value_t = 0)]
+    r#loop: u16,
+    /// height-wrap (modulus),
+    /// or 0 for "do not wrap"
+    #[arg(short, long, default_value_t = 0)]
+    wrap: u16,
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
     let (w, h) = size()?;
-    let mut t = args.initialt;
-    let x0 = args.leftx;
-    let cumulative = args.cumulative;
-    let pat = args.pattern;
-    let length = Duration::from_micros(100 * args.frame);
-    let mut b = [0;4];
-    args.on.encode_utf8(&mut b);
-    let x1 = x0 + w;
+    let mut b = [0; 4];
     let mut stdout = stdout();
+
+    let t0 = args.initialt;
+    let x0 = args.leftx;
+    let cumulative = args.tower;
+    let pat = args.pattern;
+    args.on.encode_utf8(&mut b);
+    let lo = args.r#loop;
+    let wr = args.wrap;
+
+    let mut t = t0;
+    let length = Duration::from_micros(100 * args.frame);
+    let x1 = x0 + w;
     let xr = x0..x1;
     let xv: Vec<u16> = Vec::from_iter(xr);
     let mut yv = vec![0; w as usize];
+
     loop {
         for i in 0..(w as usize) {
             yv[i] = pat.pat(xv[i], t);
         }
-        let maxy = yv
+        let maxy = {
+            let m = yv
+                .iter()
+                .max()
+                .expect("This message should only appear in the case of an empty terminal.")
+                .clone();
+            if wr != 0 && wr < m {
+                wr
+            } else {
+                m
+            }
+        };
+        let miny = yv
             .iter()
-            .max()
-            .expect("Terminals should have at least one cell")
+            .min()
+            .expect("This message should only appear in the case of an empty terminal.")
             .clone();
         for i in 0..(w as usize) {
-            yv[i] = ((yv[i] as u32 * h as u32) / maxy as u32) as u16;
+            yv[i] = if wr == 0 {
+                ((yv[i] - miny) as u32 * h as u32) / maxy as u32
+            } else {
+                (((yv[i] - miny) % wr) as u32 * h as u32) / maxy as u32
+            } as u16;
         }
+
         for y in 1..=h {
             let y = h - y;
             for x in 0..w as usize {
@@ -91,8 +125,12 @@ fn main() -> Result<()> {
                 }
             }
         }
+
         stdout.flush()?;
         t = t + 1;
+        if t - lo == t0 {
+            t = t0
+        }
         sleep(length);
         stdout.queue(Clear(ClearType::All))?;
     }
